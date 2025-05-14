@@ -11,12 +11,11 @@
       <Input class="input" 
         ref="inputRef"
         v-model:value="keyword" 
-        :maxlength="50" 
         placeholder="请输入PPT主题，如：大学生职业生涯规划" 
         @enter="createOutline()"
       >
         <template #suffix>
-          <span class="count">{{ keyword.length }} / 50</span>
+          <span class="count">{{ keyword.length }}</span>
           <span class="language" v-tooltip="'切换语言'" @click="language = language === 'zh' ? 'en' : 'zh'">{{ language === 'zh' ? '中' : '英' }}</span>
           <div class="submit" type="primary" @click="createOutline()"><IconSend class="icon" /> AI 生成</div>
         </template>
@@ -29,11 +28,14 @@
         <Select 
           style="width: 160px;"
           v-model:value="model"
-          :options="[
-            { label: 'Doubao-1.5-Pro', value: 'doubao-1.5-pro-32k' },
-            { label: 'GLM-4-Flash', value: 'GLM-4-Flash' },
-            { label: 'GLM-4-Z1-Flash', value: 'GLM-4-Z1-Flash' },
-          ]"
+          :options="modelOptions"
+        />
+        <Input
+          v-if="model === 'custom-model'"
+          style="width: 180px; margin-left: 10px;"
+          v-model:value="customModelInput"
+          placeholder="请输入自定义模型名"
+          @change="model.value = customModelInput"
         />
       </div>
     </template>
@@ -97,6 +99,17 @@ const outlineRef = ref<HTMLElement>()
 const inputRef = ref<InstanceType<typeof Input>>()
 const step = ref<'setup' | 'outline' | 'template'>('setup')
 const model = ref('doubao-1.5-pro-32k')
+const customModelInput = ref('')
+
+const modelOptions = [
+  { label: 'gpt-4o', value: 'gpt-4o' },
+  { label: 'deepseek-chat', value: 'deepseek-chat' },
+  { label: 'gemini-2.0-flash', value: 'gemini-2.0-flash' },
+  { label: 'Doubao-1.5-Pro', value: 'doubao-1.5-pro-32k' },
+  { label: 'GLM-4-Flash', value: 'GLM-4-Flash' },
+  { label: 'GLM-4-Z1-Flash', value: 'GLM-4-Z1-Flash' },
+  { label: '自定义模型', value: 'custom-model' },
+]
 
 const recommends = ref([
   '大学生职业生涯规划',
@@ -121,13 +134,15 @@ const setKeyword = (value: string) => {
   inputRef.value!.focus()
 }
 
+const getModelName = () => model.value === 'custom-model' ? customModelInput : model.value
+
 const createOutline = async () => {
   if (!keyword.value) return message.error('请先输入PPT主题')
 
   loading.value = true
   outlineCreating.value = true
-  
-  const stream = await api.AIPPT_Outline(keyword.value, language.value, model.value)
+
+  const stream = await api.AIPPT_Outline(keyword.value, language.value, getModelName())
 
   loading.value = false
   step.value = 'outline'
@@ -158,8 +173,7 @@ const createOutline = async () => {
 
 const createPPT = async () => {
   loading.value = true
-
-  const stream = await api.AIPPT(outline.value, language.value, 'doubao-1.5-pro-32k')
+  const stream = await api.AIPPT(outline.value, language.value, getModelName())
   const templateSlides: Slide[] = await api.getFileData(selectedTemplate.value).then(ret => ret.slides)
 
   const reader: ReadableStreamDefaultReader = stream.body.getReader()
