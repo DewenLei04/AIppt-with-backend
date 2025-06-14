@@ -76,7 +76,7 @@ import { storeToRefs } from 'pinia'
 import api from '@/services'
 import useAIPPT from '@/hooks/useAIPPT'
 import type { AIPPTSlide } from '@/types/AIPPT'
-import type { Slide } from '@/types/slides'
+import type { Slide, SlideTheme } from '@/types/slides'
 import message from '@/utils/message'
 import { useMainStore, useSlidesStore } from '@/store'
 import Input from '@/components/Input.vue'
@@ -86,7 +86,8 @@ import FullscreenSpin from '@/components/FullscreenSpin.vue'
 import OutlineEditor from '@/components/OutlineEditor.vue'
 
 const mainStore = useMainStore()
-const { templates } = storeToRefs(useSlidesStore())
+const slideStore = useSlidesStore()
+const { templates } = storeToRefs(slideStore)
 const { AIPPT, getMdContent } = useAIPPT()
 
 const language = ref<'zh' | 'en'>('zh')
@@ -154,6 +155,7 @@ const createOutline = async () => {
     reader.read().then(({ done, value }) => {
       if (done) {
         outline.value = getMdContent(outline.value)
+        outline.value = outline.value.replace(/<!--[\s\S]*?-->/g, '').replace(/<think>[\s\S]*?<\/think>/g, '')
         outlineCreating.value = false
         return
       }
@@ -184,6 +186,7 @@ const createPPT = async () => {
       if (done) {
         loading.value = false
         mainStore.setAIPPTDialogState(false)
+        slideStore.setTheme(templateTheme)
         return
       }
   
