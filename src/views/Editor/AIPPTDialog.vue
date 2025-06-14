@@ -136,79 +136,47 @@ const getModelName = () => model.value === 'custom-model' ? customModelInput.val
 
 const createOutline = async () => {
   if (!keyword.value) return message.error('请先输入PPT主题')
-  const modelName = getModelName()
+
   loading.value = true
   outlineCreating.value = true
-  let timeoutId: ReturnType<typeof setTimeout> | null = null
-  let finished = false
+  
+  const stream = await api.AIPPT_Outline(keyword.value, language.value, getModelName())
 
-  try {
-    const stream = await api.AIPPT_Outline(keyword.value, language.value, modelName)
-    if (!stream || !stream.body) throw new Error('AI服务无响应')
+  loading.value = false
+  step.value = 'outline'
 
-    loading.value = false
-    step.value = 'outline'
+  const reader: ReadableStreamDefaultReader = stream.body.getReader()
+  const decoder = new TextDecoder('utf-8')
+  
+  const readStream = () => {
+    reader.read().then(({ done, value }) => {
+      if (done) {
+        outline.value = getMdContent(outline.value)
+        outline.value = outline.value.replace(/<!--[\s\S]*?-->/g, '').replace(/<think>[\s\S]*?<\/think>/g, '')
+        outlineCreating.value = false
+        return
+      }
+  
+      const chunk = decoder.decode(value, { stream: true })
+      outline.value += chunk
 
-    const reader: ReadableStreamDefaultReader = stream.body.getReader()
-    const decoder = new TextDecoder('utf-8')
+      if (outlineRef.value) {
+        outlineRef.value.scrollTop = outlineRef.value.scrollHeight + 20
+      }
 
-    const clear = () => {
-      if (timeoutId) clearTimeout(timeoutId)
-      finished = true
-      outlineCreating.value = false
-    }
-
-    const readStream = () => {
-      // 30s超时
-      if (timeoutId) clearTimeout(timeoutId)
-      timeoutId = setTimeout(() => {
-        if (!finished) {
-          clear()
-          message.error('AI生成超时，请稍后重试')
-        }
-      }, 30000)
-
-      reader.read().then(({ done, value }) => {
-        if (done) {
-          clear()
-          outline.value = getMdContent(outline.value)
-          outline.value = outline.value.replace(/<!--[\s\S]*?-->/g, '').replace(/<think>[\s\S]*?<\/think>/g, '')
-          return
-        }
-        try {
-          const chunk = decoder.decode(value, { stream: true })
-          if (chunk.includes('[ERROR]')) {
-            clear()
-            message.error(chunk)
-            return
-          }
-          outline.value += chunk
-          if (outlineRef.value) {
-            outlineRef.value.scrollTop = outlineRef.value.scrollHeight + 20
-          }
-          readStream()
-        } catch (err) {
-          clear()
-          message.error('AI生成异常: ' + (err instanceof Error ? err.message : err))
-        }
-      }).catch((err) => {
-        clear()
-        message.error('AI生成异常: ' + (err instanceof Error ? err.message : err))
-      })
-    }
-    readStream()
-  } catch (err) {
-    loading.value = false
-    outlineCreating.value = false
-    message.error('AI服务异常: ' + (err instanceof Error ? err.message : err))
+      readStream()
+    })
   }
+  readStream()
 }
 
 const createPPT = async () => {
   loading.value = true
   const stream = await api.AIPPT(outline.value, language.value, getModelName())
-  const templateSlides: Slide[] = await api.getFileData(selectedTemplate.value).then(ret => ret.slides)
-
+  const templateData = await api.getFileData(selectedTemplate.value)
+  const templateSlides: Slide[] = templateData.slides
+  const templateTheme: SlideTheme = templateData.theme
+  
   const reader: ReadableStreamDefaultReader = stream.body.getReader()
   const decoder = new TextDecoder('utf-8')
   
