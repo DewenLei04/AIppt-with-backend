@@ -1,4 +1,5 @@
 # 自定义后端接口 (Custom Backend API)
+原项目5000端口的后端被此OPENAI compatible 的接口接管，只影响aippt部分
 ## usage
 推荐使用uv管理依赖 
 进入aippt_backend 目录 
