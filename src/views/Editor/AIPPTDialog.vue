@@ -35,7 +35,6 @@
           style="width: 180px; margin-left: 10px;"
           v-model:value="customModelInput"
           placeholder="请输入自定义模型名"
-          @change="model.value = customModelInput"
         />
       </div>
     </template>
@@ -99,16 +98,13 @@ const outlineCreating = ref(false)
 const outlineRef = ref<HTMLElement>()
 const inputRef = ref<InstanceType<typeof Input>>()
 const step = ref<'setup' | 'outline' | 'template'>('setup')
-const model = ref('doubao-1.5-pro-32k')
+const model = ref('gpt-4o-mini')
 const customModelInput = ref('')
 
 const modelOptions = [
-  { label: 'gpt-4o', value: 'gpt-4o' },
+  { label: 'gpt-4o-mini', value: 'gpt-4o-mini' },
   { label: 'deepseek-chat', value: 'deepseek-chat' },
   { label: 'gemini-2.0-flash', value: 'gemini-2.0-flash' },
-  { label: 'Doubao-1.5-Pro', value: 'doubao-1.5-pro-32k' },
-  { label: 'GLM-4-Flash', value: 'GLM-4-Flash' },
-  { label: 'GLM-4-Z1-Flash', value: 'GLM-4-Z1-Flash' },
   { label: '自定义模型', value: 'custom-model' },
 ]
 
@@ -135,42 +131,77 @@ const setKeyword = (value: string) => {
   inputRef.value!.focus()
 }
 
-const getModelName = () => model.value === 'custom-model' ? customModelInput : model.value
+// 修正getModelName返回字符串
+const getModelName = () => model.value === 'custom-model' ? customModelInput.value : model.value
 
 const createOutline = async () => {
   if (!keyword.value) return message.error('请先输入PPT主题')
-
+  const modelName = getModelName()
   loading.value = true
   outlineCreating.value = true
+  let timeoutId: ReturnType<typeof setTimeout> | null = null
+  let finished = false
 
-  const stream = await api.AIPPT_Outline(keyword.value, language.value, getModelName())
+  try {
+    const stream = await api.AIPPT_Outline(keyword.value, language.value, modelName)
+    if (!stream || !stream.body) throw new Error('AI服务无响应')
 
-  loading.value = false
-  step.value = 'outline'
+    loading.value = false
+    step.value = 'outline'
 
-  const reader: ReadableStreamDefaultReader = stream.body.getReader()
-  const decoder = new TextDecoder('utf-8')
-  
-  const readStream = () => {
-    reader.read().then(({ done, value }) => {
-      if (done) {
-        outline.value = getMdContent(outline.value)
-        outline.value = outline.value.replace(/<!--[\s\S]*?-->/g, '').replace(/<think>[\s\S]*?<\/think>/g, '')
-        outlineCreating.value = false
-        return
-      }
-  
-      const chunk = decoder.decode(value, { stream: true })
-      outline.value += chunk
+    const reader: ReadableStreamDefaultReader = stream.body.getReader()
+    const decoder = new TextDecoder('utf-8')
 
-      if (outlineRef.value) {
-        outlineRef.value.scrollTop = outlineRef.value.scrollHeight + 20
-      }
+    const clear = () => {
+      if (timeoutId) clearTimeout(timeoutId)
+      finished = true
+      outlineCreating.value = false
+    }
 
-      readStream()
-    })
+    const readStream = () => {
+      // 30s超时
+      if (timeoutId) clearTimeout(timeoutId)
+      timeoutId = setTimeout(() => {
+        if (!finished) {
+          clear()
+          message.error('AI生成超时，请稍后重试')
+        }
+      }, 30000)
+
+      reader.read().then(({ done, value }) => {
+        if (done) {
+          clear()
+          outline.value = getMdContent(outline.value)
+          outline.value = outline.value.replace(/<!--[\s\S]*?-->/g, '').replace(/<think>[\s\S]*?<\/think>/g, '')
+          return
+        }
+        try {
+          const chunk = decoder.decode(value, { stream: true })
+          if (chunk.includes('[ERROR]')) {
+            clear()
+            message.error(chunk)
+            return
+          }
+          outline.value += chunk
+          if (outlineRef.value) {
+            outlineRef.value.scrollTop = outlineRef.value.scrollHeight + 20
+          }
+          readStream()
+        } catch (err) {
+          clear()
+          message.error('AI生成异常: ' + (err instanceof Error ? err.message : err))
+        }
+      }).catch((err) => {
+        clear()
+        message.error('AI生成异常: ' + (err instanceof Error ? err.message : err))
+      })
+    }
+    readStream()
+  } catch (err) {
+    loading.value = false
+    outlineCreating.value = false
+    message.error('AI服务异常: ' + (err instanceof Error ? err.message : err))
   }
-  readStream()
 }
 
 const createPPT = async () => {
