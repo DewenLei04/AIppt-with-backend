@@ -22,6 +22,35 @@ export default () => {
   const transitionIndex = ref(0)
   const transitionTemplate = ref<Slide | null>(null)
 
+  // 字体大小计算缓存
+  const fontSizeCache = new Map<string, number>()
+
+  // 创建缓存的Canvas上下文，避免重复创建
+  let cachedCanvas: HTMLCanvasElement | null = null
+  let cachedContext: CanvasRenderingContext2D | null = null
+
+  const getCanvasContext = (): CanvasRenderingContext2D => {
+    if (!cachedCanvas) {
+      cachedCanvas = document.createElement('canvas')
+      cachedContext = cachedCanvas.getContext('2d')!
+    }
+    return cachedContext!
+  }
+
+  // 生成缓存键
+  const generateCacheKey = (text: string, fontFamily: string, width: number, maxLine: number): string => {
+    return `${text}_${fontFamily}_${width}_${maxLine}`
+  }
+
+  // 检查字体大小是否适合
+  const isFontSizeSuitable = (fontSize: number, text: string, fontFamily: string, width: number, maxLine: number): boolean => {
+    const context = getCanvasContext()
+    context.font = `${fontSize}px ${fontFamily}`
+    const textWidth = context.measureText(text).width
+    const line = Math.ceil(textWidth / width)
+    return line <= maxLine
+  }
+
   const checkTextType = (el: PPTElement, type: TextType) => {
     return (el.type === 'text' && el.textType === type) || (el.type === 'shape' && el.text && el.text.type === type)
   }
@@ -81,24 +110,45 @@ export default () => {
     width: number
     maxLine: number
   }) => {
-    const canvas = document.createElement('canvas')
-    const context = canvas.getContext('2d')!
-  
-    let newFontSize = fontSize
     const minFontSize = 10
-  
-    while (newFontSize >= minFontSize) {
-      context.font = `${newFontSize}px ${fontFamily}`
-      const textWidth = context.measureText(text).width
-      const line = Math.ceil(textWidth / width)
-  
-      if (line <= maxLine) return newFontSize
-  
-      const step = newFontSize <= 22 ? 1 : 2
-      newFontSize = newFontSize - step
+    
+    // 检查缓存
+    const cacheKey = generateCacheKey(text, fontFamily, width, maxLine)
+    if (fontSizeCache.has(cacheKey)) {
+      return fontSizeCache.get(cacheKey)!
     }
-  
-    return minFontSize
+
+    // 如果初始字体大小已经适合，直接返回
+    if (isFontSizeSuitable(fontSize, text, fontFamily, width, maxLine)) {
+      fontSizeCache.set(cacheKey, fontSize)
+      return fontSize
+    }
+
+    // 二分查找最优字体大小
+    let left = minFontSize
+    let right = fontSize
+    let result = minFontSize
+
+    while (left <= right) {
+      const mid = Math.floor((left + right) / 2)
+      
+      if (isFontSizeSuitable(mid, text, fontFamily, width, maxLine)) {
+        result = mid
+        left = mid + 1 // 尝试更大的字体
+      } 
+      else {
+        right = mid - 1 // 尝试更小的字体
+      }
+    }
+
+    // 缓存结果
+    fontSizeCache.set(cacheKey, result)
+    return result
+  }
+
+  // 清理缓存（可选，用于内存管理）
+  const clearFontSizeCache = () => {
+    fontSizeCache.clear()
   }
   
   const getFontInfo = (htmlString: string) => {
@@ -520,5 +570,6 @@ export default () => {
     AIPPT,
     getMdContent,
     getJSONContent,
+    clearFontSizeCache,
   }
 }
