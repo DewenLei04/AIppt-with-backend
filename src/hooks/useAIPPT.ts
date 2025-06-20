@@ -51,50 +51,50 @@ export default () => {
     return line <= maxLine
   }
 
+  // 模板索引缓存
+  const templateIndexCache = new Map<TextType, Map<number, Slide[]>>()
+
+  // 创建模板索引的辅助函数
+  const createTemplateIndex = (templates: Slide[], type: TextType): Map<number, Slide[]> => {
+    if (templateIndexCache.has(type)) return templateIndexCache.get(type)!
+    
+    const index = new Map<number, Slide[]>()
+    for (const template of templates) {
+      const count = template.elements.filter(el => checkTextType(el, type)).length
+      if (!index.has(count)) {
+        index.set(count, [])
+      }
+      index.get(count)!.push(template)
+    }
+    templateIndexCache.set(type, index)
+    return index
+  }
+
   const checkTextType = (el: PPTElement, type: TextType) => {
     return (el.type === 'text' && el.textType === type) || (el.type === 'shape' && el.text && el.text.type === type)
   }
   
-  const getUseableTemplates = (templates: Slide[], n: number, type: TextType) => {
-    if (n === 1) {
-      const list = templates.filter(slide => {
-        const items = slide.elements.filter(el => checkTextType(el, type))
-        const titles = slide.elements.filter(el => checkTextType(el, 'title'))
-        const texts = slide.elements.filter(el => checkTextType(el, 'content'))
-  
-        return !items.length && titles.length === 1 && texts.length === 1
-      })
-  
-      if (list.length) return list
-    }
-  
-    let target: Slide | null = null
-  
-    const list = templates.filter(slide => {
-      const len = slide.elements.filter(el => checkTextType(el, type)).length
-      return len >= n
-    })
-    if (list.length === 0) {
-      const sorted = templates.sort((a, b) => {
-        const aLen = a.elements.filter(el => checkTextType(el, type)).length
-        const bLen = b.elements.filter(el => checkTextType(el, type)).length
-        return aLen - bLen
-      })
-      target = sorted[sorted.length - 1]
-    }
-    else {
-      target = list.reduce((closest, current) => {
-        const currentLen = current.elements.filter(el => checkTextType(el, type)).length
-        const closestLen = closest.elements.filter(el => checkTextType(el, type)).length
-        return (currentLen - n) <= (closestLen - n) ? current : closest
-      })
-    }
-  
-    return templates.filter(slide => {
-      const len = slide.elements.filter(el => checkTextType(el, type)).length
-      const targetLen = target!.elements.filter(el => checkTextType(el, type)).length
-      return len === targetLen
-    })
+  const getUseableTemplates = (index: Map<number, Slide[]>, n: number) => {
+    // 1. 直接从索引中查找
+    if (index.has(n)) return index.get(n)!
+
+    // 2. 如果找不到，查找最接近的
+    const availableCounts = [...index.keys()]
+    if (!availableCounts.length) return []
+
+    // 找到大于n的最小计数
+    const closestCount = availableCounts.reduce((prev, curr) => {
+      if (curr >= n && (prev === -1 || curr < prev)) {
+        return curr
+      }
+      return prev
+    }, -1)
+
+    if (closestCount !== -1) return index.get(closestCount)!
+
+    // 如果没有大于n的，就找小于n的最大计数
+    const maxCount = Math.max(...availableCounts)
+    return index.get(maxCount) || []
   }
   
   const getAdaptedFontsize = ({
@@ -345,6 +345,11 @@ export default () => {
     const contentTemplates = templateSlides.filter(slide => slide.type === 'content')
     const endTemplates = templateSlides.filter(slide => slide.type === 'end')
 
+    // 创建模板索引
+    const contentsIndex = createTemplateIndex(contentsTemplates, 'item')
+    const contentIndex = createTemplateIndex(contentTemplates, 'item')
+    const contentTitleIndex = createTemplateIndex(contentTemplates, 'itemTitle')
+
     if (!transitionTemplate.value) {
       const _transitionTemplate = transitionTemplates[Math.floor(Math.random() * transitionTemplates.length)]
       transitionTemplate.value = _transitionTemplate
@@ -373,7 +378,7 @@ export default () => {
         })
       }
       else if (item.type === 'contents') {
-        const _contentsTemplates = getUseableTemplates(contentsTemplates, item.data.items.length, 'item')
+        const _contentsTemplates = getUseableTemplates(contentsIndex, item.data.items.length)
         const contentsTemplate = _contentsTemplates[Math.floor(Math.random() * _contentsTemplates.length)]
 
         const sortedNumberItems = contentsTemplate.elements.filter(el => checkTextType(el, 'itemNumber'))
@@ -477,7 +482,8 @@ export default () => {
         })
       }
       else if (item.type === 'content') {
-        const _contentTemplates = getUseableTemplates(contentTemplates, item.data.items.length, 'item')
+        const templates = item.data.items.some(i => i.title) ? contentTitleIndex : contentIndex
+        const _contentTemplates = getUseableTemplates(templates, item.data.items.length)
         const contentTemplate = _contentTemplates[Math.floor(Math.random() * _contentTemplates.length)]
 
         const sortedTitleItemIds = contentTemplate.elements.filter(el => checkTextType(el, 'itemTitle')).sort((a, b) => {

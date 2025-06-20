@@ -96,7 +96,7 @@ def build_ppt_content_chain(model_name: str = None):
     model = model_name or default_model
     llm = ChatOpenAI(
         temperature=0.7,
-        model=model,
+        model=model, 
         openai_api_key=api_key,
         base_url=base_url
     )
@@ -156,6 +156,46 @@ async def generate_ppt_content_stream(request: PPTContentRequest):
             await asyncio.sleep(0.5)
 
     return StreamingResponse(stream_pages(), media_type="text/event-stream")
+
+@app.get("/health/openai")
+async def test_openai_health():
+    """Test OpenAI connection health"""
+    try:
+        api_key = os.environ.get("OPENAI_API_KEY")
+        base_url = os.environ.get("OPENAI_BASE_URL")
+        model = os.environ.get("AIPPT_MODEL", "gpt-4o")
+        
+        if not api_key:
+            return {
+                "status": "error",
+                "message": "OPENAI_API_KEY not configured",
+                "details": "Please set OPENAI_API_KEY in your environment variables"
+            }
+        
+        # Test connection
+        llm = ChatOpenAI(
+            temperature=0.1,
+            model=model,
+            openai_api_key=api_key,
+            base_url=base_url
+        )
+        
+        response = llm.invoke("Respond with 'OK' if you can see this message.")
+        
+        return {
+            "status": "success",
+            "message": "OpenAI connection successful",
+            "model": model,
+            "base_url": base_url or "default",
+            "test_response": response.content
+        }
+        
+    except Exception as e:
+        return {
+            "status": "error",
+            "message": "OpenAI connection failed",
+            "error": str(e)
+        }
 
 if __name__ == "__main__":
     import uvicorn
