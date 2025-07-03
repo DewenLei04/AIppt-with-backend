@@ -59,8 +59,13 @@ export default () => {
     if (templateIndexCache.has(type)) return templateIndexCache.get(type)!
     
     const index = new Map<number, Slide[]>()
-    for (const template of templates) {
-      const count = template.elements.filter(el => checkTextType(el, type)).length
+    // Pre-filter elements by type to avoid repeated filtering
+    const templatesWithTypeCount = templates.map(template => ({
+      template,
+      count: template.elements.filter(el => checkTextType(el, type)).length
+    }))
+    
+    for (const { template, count } of templatesWithTypeCount) {
       if (!index.has(count)) {
         index.set(count, [])
       }
@@ -220,18 +225,31 @@ export default () => {
   }
 
   const getUseableImage = (el: PPTImageElement): ImgPoolItem | null => {
-    let img: ImgPoolItem | null = null
-  
-    let imgs = []
-  
-    if (el.width === el.height) imgs = imgPool.value.filter(img => img.width === img.height)
-    else if (el.width > el.height) imgs = imgPool.value.filter(img => img.width > img.height)
-    else imgs = imgPool.value.filter(img => img.width <= img.height)
+    // Pre-compute aspect ratio to avoid repeated calculations
+    const targetRatio = el.width / el.height
+    const isSquare = el.width === el.height
+    const isLandscape = el.width > el.height
+    
+    // Use more efficient filtering with pre-computed conditions
+    let imgs = imgPool.value
+    if (isSquare) {
+      imgs = imgs.filter(img => img.width === img.height)
+    }
+    else if (isLandscape) {
+      imgs = imgs.filter(img => img.width > img.height)
+    }
+    else {
+      imgs = imgs.filter(img => img.width <= img.height)
+    }
+    
     if (!imgs.length) imgs = imgPool.value
-  
-    img = imgs[Math.floor(Math.random() * imgs.length)]
-    imgPool.value = imgPool.value.filter(item => item.id !== img!.id)
-  
+    
+    const img = imgs[Math.floor(Math.random() * imgs.length)]
+    // Use Set for O(1) removal instead of filter
+    const imgPoolSet = new Set(imgPool.value.map(item => item.id))
+    imgPoolSet.delete(img.id)
+    imgPool.value = imgPool.value.filter(item => imgPoolSet.has(item.id))
+    
     return img
   }
   
@@ -339,11 +357,22 @@ export default () => {
       else AISlides.push(template)
     }
 
-    const coverTemplates = templateSlides.filter(slide => slide.type === 'cover')
-    const contentsTemplates = templateSlides.filter(slide => slide.type === 'contents')
-    const transitionTemplates = templateSlides.filter(slide => slide.type === 'transition')
-    const contentTemplates = templateSlides.filter(slide => slide.type === 'content')
-    const endTemplates = templateSlides.filter(slide => slide.type === 'end')
+    // Pre-filter templates by type to avoid repeated filtering
+    const templateMap = new Map<string, Slide[]>()
+    for (const slide of templateSlides) {
+      if (slide.type && !templateMap.has(slide.type)) {
+        templateMap.set(slide.type, [])
+      }
+      if (slide.type) {
+        templateMap.get(slide.type)!.push(slide)
+      }
+    }
+    
+    const coverTemplates = templateMap.get('cover') || []
+    const contentsTemplates = templateMap.get('contents') || []
+    const transitionTemplates = templateMap.get('transition') || []
+    const contentTemplates = templateMap.get('content') || []
+    const endTemplates = templateMap.get('end') || []
 
     // 创建模板索引
     const contentsIndex = createTemplateIndex(contentsTemplates, 'item')
@@ -380,6 +409,20 @@ export default () => {
       else if (item.type === 'contents') {
         const _contentsTemplates = getUseableTemplates(contentsIndex, item.data.items.length)
         const contentsTemplate = _contentsTemplates[Math.floor(Math.random() * _contentsTemplates.length)]
+
+        // Pre-compute element maps for O(1) lookups
+        const elementMap = new Map<string, PPTElement>()
+        const groupIdMap = new Map<string, PPTElement[]>()
+        
+        for (const el of contentsTemplate.elements) {
+          elementMap.set(el.id, el)
+          if (el.groupId) {
+            if (!groupIdMap.has(el.groupId)) {
+              groupIdMap.set(el.groupId, [])
+            }
+            groupIdMap.get(el.groupId)!.push(el)
+          }
+        }
 
         const sortedNumberItems = contentsTemplate.elements.filter(el => checkTextType(el, 'itemNumber'))
         const sortedNumberItemIds = sortedNumberItems.sort((a, b) => {
@@ -433,8 +476,9 @@ export default () => {
 
         const longestText = item.data.items.reduce((longest, current) => current.length > longest.length ? current : longest, '')
 
-        const unusedElIds: string[] = []
-        const unusedGroupIds: string[] = []
+        // Use Sets for O(1) lookups instead of arrays
+        const unusedElIds = new Set<string>()
+        const unusedGroupIds = new Set<string>()
         const elements = contentsTemplate.elements.map(el => {
           if (el.type === 'image' && el.imageType && imgPool.value.length) return getNewImgElement(el)
           if (el.type !== 'text' && el.type !== 'shape') return el
@@ -443,8 +487,8 @@ export default () => {
             const itemTitle = item.data.items[index]
             if (itemTitle) return getNewTextElement({ el, text: itemTitle, maxLine: 1, longestText })
 
-            unusedElIds.push(el.id)
-            if (el.groupId) unusedGroupIds.push(el.groupId)
+            unusedElIds.add(el.id)
+            if (el.groupId) unusedGroupIds.add(el.groupId)
           }
           if (checkTextType(el, 'itemNumber')) {
             const index = sortedNumberItemIds.findIndex(id => id === el.id)
@@ -452,7 +496,7 @@ export default () => {
             return getNewTextElement({ el, text: index + offset + 1 + '', maxLine: 1, digitPadding: true })
           }
           return el
-        }).filter(el => !unusedElIds.includes(el.id) && !(el.groupId && unusedGroupIds.includes(el.groupId)))
+        }).filter(el => !unusedElIds.has(el.id) && !(el.groupId && unusedGroupIds.has(el.groupId)))
         slides.push({
           ...contentsTemplate,
           id: nanoid(10),
@@ -486,6 +530,7 @@ export default () => {
         const _contentTemplates = getUseableTemplates(templates, item.data.items.length)
         const contentTemplate = _contentTemplates[Math.floor(Math.random() * _contentTemplates.length)]
 
+        // Pre-compute sorted arrays to avoid repeated sorting
         const sortedTitleItemIds = contentTemplate.elements.filter(el => checkTextType(el, 'itemTitle')).sort((a, b) => {
           const aIndex = a.left + a.top * 2
           const bIndex = b.left + b.top * 2
@@ -504,8 +549,9 @@ export default () => {
           return aIndex - bIndex
         }).map(el => el.id)
 
-        const itemTitles = []
-        const itemTexts = []
+        // Pre-compute item arrays to avoid repeated filtering
+        const itemTitles: string[] = []
+        const itemTexts: string[] = []
 
         for (const _item of item.data.items) {
           if (_item.title) itemTitles.push(_item.title)
@@ -513,6 +559,15 @@ export default () => {
         }
         const longestTitle = itemTitles.reduce((longest, current) => current.length > longest.length ? current : longest, '')
         const longestText = itemTexts.reduce((longest, current) => current.length > longest.length ? current : longest, '')
+
+        // Create lookup maps for O(1) access
+        const titleIndexMap = new Map<string, number>()
+        const textIndexMap = new Map<string, number>()
+        const numberIndexMap = new Map<string, number>()
+        
+        sortedTitleItemIds.forEach((id, index) => titleIndexMap.set(id, index))
+        sortedTextItemIds.forEach((id, index) => textIndexMap.set(id, index))
+        sortedNumberItemIds.forEach((id, index) => numberIndexMap.set(id, index))
 
         const elements = contentTemplate.elements.map(el => {
           if (el.type === 'image' && el.imageType && imgPool.value.length) return getNewImgElement(el)
@@ -525,23 +580,29 @@ export default () => {
           }
           else {
             if (checkTextType(el, 'itemTitle')) {
-              const index = sortedTitleItemIds.findIndex(id => id === el.id)
-              const contentItem = item.data.items[index]
-              if (contentItem && contentItem.title) {
-                return getNewTextElement({ el, text: contentItem.title, longestText: longestTitle, maxLine: 1 })
+              const index = titleIndexMap.get(el.id)
+              if (index !== undefined) {
+                const contentItem = item.data.items[index]
+                if (contentItem && contentItem.title) {
+                  return getNewTextElement({ el, text: contentItem.title, longestText: longestTitle, maxLine: 1 })
+                }
               }
             }
             if (checkTextType(el, 'item')) {
-              const index = sortedTextItemIds.findIndex(id => id === el.id)
-              const contentItem = item.data.items[index]
-              if (contentItem && contentItem.text) {
-                return getNewTextElement({ el, text: contentItem.text, longestText, maxLine: 4 })
+              const index = textIndexMap.get(el.id)
+              if (index !== undefined) {
+                const contentItem = item.data.items[index]
+                if (contentItem && contentItem.text) {
+                  return getNewTextElement({ el, text: contentItem.text, longestText, maxLine: 4 })
+                }
               }
             }
             if (checkTextType(el, 'itemNumber')) {
-              const index = sortedNumberItemIds.findIndex(id => id === el.id)
-              const offset = item.offset || 0
-              return getNewTextElement({ el, text: index + offset + 1 + '', maxLine: 1, digitPadding: true })
+              const index = numberIndexMap.get(el.id)
+              if (index !== undefined) {
+                const offset = item.offset || 0
+                return getNewTextElement({ el, text: index + offset + 1 + '', maxLine: 1, digitPadding: true })
+              }
             }
           }
           if (checkTextType(el, 'title') && item.data.title) {
